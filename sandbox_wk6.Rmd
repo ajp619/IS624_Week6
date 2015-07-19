@@ -1,0 +1,28 @@
+---
+title: "Week6_sandbox"
+author: "Aaron Palumbo"
+date: "Tuesday, July 14, 2015"
+output: html_document
+---
+
+Autocorrelation
+```{r}
+acf.man <- function(x, l){
+  t <- x[ (-1 * (length(x):1)[1:l]) ]
+  s <- x[ -(1:l) ]
+  print(paste0("Cor(s, t) = ", cor(s, t)))
+  return(
+    mean( (t - mean(t)) * (s - mean(s)) ) / (sd(t) * sd(s))
+    )
+}
+
+x <- runif(1000)
+l <- 3
+a <- acf.man(x, l)
+
+print(c("Manual Calc = ", a))
+aa <- acf(x, plot=F)$acf[l + 1]
+print(paste0("acf(x)[", l + 1, "] = ", aa))
+
+```
+
