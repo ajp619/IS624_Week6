@@ -83,7 +83,7 @@ adf.test(wmurders.d1)
 kpss.test(wmurders.d1)
 ```
 
-These tests are telling us different things. An ADF test $< 0.5$ indicates a stationary series, but a KPSS test $< 0.5$ indicates a non-stationary series. Take another difference and see what happens:
+These tests are telling us different things. An ADF test $< 0.05$ indicates a stationary series, but a KPSS test $< 0.05$ indicates a non-stationary series. Take another difference and see what happens:
 
 ```{r}
 wmurders.d2 <- diff(diff(wmurders))
@@ -108,35 +108,32 @@ test.arima <- function(t.series, order){
   return(df)
 }
 
-df <- test.arima(wmurders.d2, c(1, 2, 0))
-df <- rbind(df,
-            test.arima(wmurders, c(1, 2, 1)),
-            test.arima(wmurders, c(2, 2, 0)),
-            test.arima(wmurders, c(1, 1, 1)),
-            test.arima(wmurders, c(0, 1, 1)),
-            test.arima(wmurders, c(1, 1, 0)),
-            test.arima(wmurders, c(0, 1, 0)))
+gridSearch <- expand.grid(c(0, 1, 2),
+                          c(1, 2),
+                          c(0, 1, 2))
+df.list <- apply(gridSearch, MARGIN=1, FUN=function(x) {test.arima(wmurders, x)})
+
+df <- do.call(rbind, df.list)
+
 kable(df)
 ```
 
-Trying several models, including several with $d=1$, we find the model with the lowest AICc to be `r df[df$AICc == min(df$AICc), "model"]`
+Trying several models, including several with $d=1$ since the residual tests were borderline, we find the model with the lowest AICc to be `r df[df$AICc == min(df$AICc), "model"]`
 
 Let's fit this model and test the residuals:
 
 ```{r}
-fit <- Arima(wmurders, order=c(0, 1, 0))
+fit <- Arima(wmurders, order=c(0, 1, 2))
 tsdisplay(residuals(fit), lag.max=20)
 ```
 
-We see in the ACF and PACF the small spike at lag 2.  Since it is  only one this might be okay. Let's do a portmanteau test:
+There are no significant spikes in either the ACF or PACF plots. Let's confirm with a portmanteau test:
 
 ```{r}
 Box.test(residuals(fit), lag=24, fitdf=4, type="Ljung")
 ```
 
-The portmanteau test indicates the residuals are white noise so we conclude that the best model is ARIMA(0, 1, 0) - a random walk.
-
-Note: The auto.arima function returns ARIMA(1, 2, 1) as the best model. We see in out table that the AICc for that model is -6.4 while the AICc for the model we selected is -11.4. As long as the residuals look okay, I don't see why we wouldn't go with the model with the lower AICc.
+The portmanteau test indicates the residuals are white noise so we conclude that the best model is ARIMA(0, 1, 2).
 
 ### 8.6 (b)
 
@@ -147,7 +144,7 @@ No. A constant introduces drift into the model, which we do not appear to have i
 ### 8.6 (c)
 **Write this model in terms of the backshift operator.**
 
-$$(1-B)\;y_t = 0$$
+$$ (1 - B)^2 y_t = (1 + \theta_1B + \theta_2B^2)e_t$$
 
 ### 8.6 (d)
 
@@ -162,8 +159,44 @@ $$(1-B)\;y_t = 0$$
 ```{r}
 fcast <- forecast(fit, h=3)
 fcast$mean
+
 ```
 
+$$
+\begin{aligned}
+              (1 - B)^2 y_t &= (1 + \theta_1 B + \theta_2 B^2) e_t\\
+         (1 - 2B + B^2) y_t &= e_t + \theta_1 B e_t + \theta_2 B^2 e_t\\
+     y_t - 2B y_t + B^2 y_t &= e_t + \theta_1 B e_t + \theta_2 B^2 e_t\\
+  y_t - 2 y_{t-1} + y_{t-2} &= e_t + \theta_1 e_{t-1} + \theta_2 e_{t-2}\\
+                        y_t &= 2 y_{t-1} - y_{t-2} + e_t + \theta_1 e_{t-1} + \theta_2 e_{t-2}\\
+                    y_{t+1} &= 2 y_t - y_{t-1} + e_{t+1} + \theta_1 e_t + \theta_2 e_{t-1}\\
+                    y_{t+1} &= 2 y_t - y_{t-1} + 0 + \theta_1 e_t + \theta_2 e_{t-1}\\
+\end{aligned}
+$$
+
+```{r eval=FALSE}
+toforecast <- 3
+
+yt <- fit$x
+et <- fit$residuals
+theta1 <- as.numeric(fit$coef['ma2'])
+theta2 <- as.numeric(fit$coef['ma1'])
+
+for (h in 1:toforecast){
+  n <- length(yt)
+  y_tp1 <- 2 * yt[n] - yt[n - 1] + theta1 * et[n] + theta2 * et[n - 1]
+  yt <- c(yt, y_tp1)
+  et <- c(et, 0)
+}
+
+f <- yt[(length(yt) - toforecast + 1):length(yt)]
+
+plot(fcast)
+lines(fit$x - fit$residuals, col='blue')
+points(c(2005, 2006, 2007), f, col='red')
+```
+
+These points do not line up and I'm not sure where my mistake is.
 
 ### 8.6 (f)
 **Create a plot of the series with forecasts and prediction intervals for the next three periods shown.**
@@ -188,39 +221,158 @@ As I said above, the auto.arima function returns ARIMA(1, 2, 1) as the best mode
 
 **Consider the total net generation of  electricity (in billion kilowatt hours) by the U.S. electric industry (monthly for  the period 1985-1996). (Data set usmelec.) In general there are two peaks per year: in mid-summer and mid-winter.
 
+```{r}
+rm(list=ls())
+data(usmelec)
+```
+
+
 ### 8.6 (a)
 
 **Examine the 12-month moving average of this series to  see what kind of trend is involved.**
 
+```{r}
+movAvg <- ma(usmelec, order=12)
+plot(usmelec, col='gray', main="Electricity Net Generation",
+     ylab="Billions of kilowatt hours (kWh)")
+lines(movAvg)
+```
+
+There is an increase in electricity generation over time. There is also a strong season component.
 
 ### 8.6 (b)
 
-**Do the data need transformin? If so, find a suitable transformation.**
+**Do the data need transforming? If so, find a suitable transformation.**
 
+Yes the data need transforming. There is an increase in variance over time.
+
+```{r}
+lambda <- BoxCox.lambda(usmelec)
+netusage <- BoxCox(usmelec, lambda=lambda)
+
+plot(netusage)
+```
+
+We can check this by using a seasonal difference
+
+```{r}
+plot(netusage - BoxCox(movAvg, lambda=lambda))
+```
+
+It looks like the variance is not increasing.
+
+The other option for this is using a log transform. Let's take a look at what this looks like when we subtract the moving avegage:
+
+```{r}
+plot(log(usmelec) - log(movAvg))
+```
+
+This still appears to have a trend in the variance, so we will go with the Box Cox transform.
 
 ### 8.6 (c)
 
 **Are the data stationary? If not, find an appropriate differencing which yields stationary data.**
 
+No the data are not stationary. Let's start with a seasonal difference:
+
+```{r}
+tsdisplay(diff(netusage, 12))
+```
+
+The decaying trend in the ACF indicates a first order diff in necessary:
+
+```{r}
+tsdisplay(diff(diff(netusage, 12)))
+```
+
+That looks better, but we still have some significant spikes. We can try our tests for stationary data now:
+
+
+```{r}
+adf.test(diff(diff(netusage, 12)))
+kpss.test(diff(diff(netusage, 12)))
+```
+
+With a seasaonal-12 and second order diff, both of our unit root tests indicate a stationary series. I'm not sure what to make of the ACF and PACF plots. They still have some significant spikes.
 
 ### 8.6 (d)
 
-**Identify a couple of  ARIMA models thatmighht be useful in describing the time series. Which of your models is the best according to their AIC values?**
+**Identify a couple of  ARIMA models that mighht be useful in describing the time series. Which of your models is the best according to their AIC values?**
+
+```{r}
+test.arima <- function(t.series, params){
+  order <- as.numeric(params[1:3])
+  seasonal <- as.numeric(params[4:6])
+  df <- data.frame(model=paste0("ARIMA(", 
+                                paste0(params, collapse=","), 
+                                ")"),
+                   AICc=Arima(t.series, 
+                              order=order, 
+                              seasonal=seasonal,
+                              lambda=lambda)$aicc)
+  return(df)
+}
+
+gridSearch <- expand.grid(c(0, 1, 2), #p
+                          c(2), #d
+                          c(0, 1), #q
+                          c(1, 2), #P
+                          c(1), #D
+                          c(0, 1)  #Q
+                          )
+df.list <- apply(gridSearch, MARGIN=1, FUN=function(x) {test.arima(usmelec, x)})
+
+df <- do.call(rbind, df.list)
+
+kable(df)
+```
+
+By AICc, the best model appears to be ARIMA(2, 2, 1)(2, 1, 1)
 
 ### 8.6 (e)
 
 **Estimate the parameters of your best model and do diagnostic testing on the residuals. Do the residuals resemble white noise? If not, try to find another ARIMA model which fits better.**
 
+```{r}
+fit <- Arima(usmelec, order=c(2, 2, 1),
+             seasonal=c(2, 1, 1),
+             lambda=lambda)
+
+tsdisplay(fit$residuals)
+
+adf.test(fit$residuals)
+kpss.test(fit$residuals)
+```
+
+The graphs look pretty good. There are a few spikes in the ACF and PACF that I  don't like but I'm not sure how many is too many. Both the unit root tests come back saying the series is stationary.
+
 ### 8.6 (f)
 
 **Forecast the next 15 years of generation of electricity by the U.S. electric industry. Get the latest figures from http://data.is/zgRWCO to check on the accuracy of your forecasts.**
 
+```{r}
+downloaded <- read.csv('electricity-overview.csv')
+names(downloaded) <- c("month", "elec")
+
+actual.ts <- ts(downloaded$elec, start=c(1973, 1), frequency = 12)
+plot(actual.ts)
+```
+
+
+```{r}
+fcast <- forecast(fit, h=15*12)
+plot(fcast)
+lines(actual.ts, col='red')
+
+```
+
+That's pretty impressive! To be honest, it worked better than I expected.
 
 ### 8.6 (g)
 
-**How many years of forecasts do you tink are sufficiently accurate to be usable?**
+**How many years of forecasts do you think are sufficiently accurate to be usable?**
 
-
+Judging from the confidence intervals, I would guess the next five years are usable, but much beyond that and things get really uncertain.
 
 
 
